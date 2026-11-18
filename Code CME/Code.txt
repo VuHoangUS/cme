@@ -1,0 +1,203 @@
+const SPREADSHEET_ID =
+'1BlGNUTO2mNG5UXVN1_RgMWmWFlKlm-CLfzQ1IGuE0_Q';
+
+const SHEET_NAME = 'DATA FOR WEB';
+
+// 2 khóa dùng cơ chế cũ (Họ tên + Năm sinh).
+// Các khóa còn lại dùng CC/CCCD/CMND (cột B).
+const LEGACY_COURSES = [
+  "CME - Đổi mới đơn vị tiệt khuẩn trung tâm: Từ thói quen đến mô hình hiệu quả và an toàn - 02/6/2026",
+  "CME - Sốt xuất huyết Dengue ở người lớn, người cao tuổi và người có bệnh nền: Bài học điều trị và tăng cường dự phòng trước mùa cao điểm - 18/6/2026"
+];
+
+function doGet(e) {
+
+  const action = e.parameter.action;
+
+  if (action == "courses") {
+    return output(getCourses());
+  }
+
+  if (action == "search") {
+
+    return output(
+      searchCertificate(
+        e.parameter.course,
+        e.parameter.name,
+        e.parameter.year,
+        e.parameter.cccd
+      )
+    );
+
+  }
+
+  return output({
+    status: "ok"
+  });
+
+}
+
+function output(obj){
+
+  return ContentService
+      .createTextOutput(
+          JSON.stringify(obj)
+      )
+      .setMimeType(ContentService.MimeType.JSON);
+
+}
+
+function getCourses(){
+
+  const sheet =
+      SpreadsheetApp
+      .openById(SPREADSHEET_ID)
+      .getSheetByName(SHEET_NAME);
+
+  const values =
+      sheet.getRange(
+        2,
+        1,
+        sheet.getLastRow()-1,
+        1
+      ).getValues();
+
+  return [...new Set(values.flat().filter(String))];
+
+}
+
+function cleanText(str){
+  return String(str).trim().replace(/\s+/g," ");
+}
+
+function isLegacyCourse(course){
+  const c = cleanText(course);
+  return LEGACY_COURSES.some(function(x){
+    return cleanText(x) == c;
+  });
+}
+
+// Chuẩn hóa số CC/CCCD/CMND: bỏ khoảng trắng, ký tự lạ;
+// nếu toàn số thì bỏ số 0 đầu (phòng trường hợp Sheet làm mất số 0)
+function normalizeId(str){
+
+  let s = String(str)
+      .replace(/[^0-9a-zA-Z]/g,"")
+      .toUpperCase();
+
+  if(/^\d+$/.test(s)){
+    s = s.replace(/^0+/,"");
+  }
+
+  return s;
+
+}
+
+function buildResult(rowLink){
+
+  let downloadLink = rowLink;
+
+  const match =
+      rowLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
+
+  if(match){
+
+      downloadLink =
+      "https://drive.google.com/uc?export=download&id="+match[1];
+
+  }
+
+  return{
+
+      found:true,
+      viewLink:rowLink,
+      downloadLink:downloadLink
+
+  };
+
+}
+
+function searchCertificate(course,name,year,cccd){
+
+  const sheet =
+      SpreadsheetApp
+      .openById(SPREADSHEET_ID)
+      .getSheetByName(SHEET_NAME);
+
+  const data =
+      sheet.getDataRange().getValues();
+
+  const courseKey = cleanText(course);
+  const legacy = isLegacyCourse(course);
+
+  if(legacy){
+
+      // ===== CƠ CHẾ CŨ: Họ tên + Năm sinh =====
+      const inName = normalizeVietnamese(name);
+      const inYear = String(year).trim();
+
+      for(let i=1;i<data.length;i++){
+
+          const rowCourse = cleanText(data[i][0]);
+          const rowName   = normalizeVietnamese(data[i][1]);
+          const rowYear   = String(data[i][2]).trim();
+          const rowLink   = String(data[i][4]).trim();
+
+          if(
+              rowCourse==courseKey &&
+              rowName==inName &&
+              rowYear==inYear &&
+              rowLink
+          ){
+              return buildResult(rowLink);
+          }
+
+      }
+
+  } else {
+
+      // ===== CƠ CHẾ MỚI: CC/CCCD/CMND (cột B) =====
+      const inId = normalizeId(cccd || "");
+
+      if(!inId){
+          return { found:false };
+      }
+
+      for(let i=1;i<data.length;i++){
+
+          const rowCourse = cleanText(data[i][0]);
+          const rowId     = normalizeId(data[i][1]);
+          const rowLink   = String(data[i][4]).trim();
+
+          if(
+              rowCourse==courseKey &&
+              rowId==inId &&
+              rowLink
+          ){
+              return buildResult(rowLink);
+          }
+
+      }
+
+  }
+
+  return{
+
+      found:false
+
+  };
+
+}
+
+function normalizeVietnamese(str){
+
+  return String(str)
+      .trim()
+      .toUpperCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g,"")
+      .replace(/Đ/g,"D")
+      .replace(/đ/g,"D")
+      .replace(/\s+/g," ");
+
+}
